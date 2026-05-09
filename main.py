@@ -4,293 +4,279 @@ import os
 import sys
 
 pygame.init()
+pygame.mixer.init()
 
 # =========================
 # НАСТРОЙКИ
 # =========================
-WIDTH = 800
-HEIGHT = 600
+WIDTH, HEIGHT = 800, 600
 BLOCK = 32
-
 FPS = 60
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Snake Game")
-
+pygame.display.set_caption("Snake Game - Blue Record Edition")
 clock = pygame.time.Clock()
 
-# =========================
-# ПАПКА IMG
-# =========================
-IMG = os.path.join(os.path.dirname(__file__), "Imgs")
+IMG = "Imgs"
+SND = "sounds"
+
 
 def load_img(name):
-    return pygame.image.load(os.path.join(IMG, name))
+    path = os.path.join(IMG, name)
+    return pygame.image.load(path) if os.path.exists(path) else pygame.Surface((BLOCK, BLOCK))
+
 
 background = load_img("bg_1.jpg")
 background = pygame.transform.scale(background, (WIDTH, HEIGHT))
 
-# =========================
-# РЕЖИМЫ
-# =========================
-MODE = None
-
-MOVE_DELAY = 120
-speed_level = 0
-
-def set_mode(mode):
-    global MOVE_DELAY, MODE, speed_level
-
-    MODE = mode
-    speed_level = 0
-
-    if mode == "normal":
-        MOVE_DELAY = 120
-
-    elif mode == "medium":
-        MOVE_DELAY = 120
-
-    elif mode == "hard":
-        MOVE_DELAY = 40  # x3 скорость
-
-def update_speed(score):
-    global MOVE_DELAY, speed_level
-
-    if MODE != "medium":
-        return
-
-    new_level = score // 5
-
-    if new_level > speed_level:
-        speed_level = new_level
-        MOVE_DELAY = int(MOVE_DELAY * 0.9)
-
-        if MOVE_DELAY < 50:
-            MOVE_DELAY = 50
 
 # =========================
-# ЗМЕЙКА
+# ЧАСТИЦЫ (ЭФФЕКТЫ)
+# =========================
+class Particle:
+    def __init__(self, x, y, color):
+        self.x, self.y = x, y
+        self.dx = random.uniform(-3, 3)
+        self.dy = random.uniform(-3, 3)
+        self.life = 255
+        self.color = color
+
+    def update(self):
+        self.x += self.dx
+        self.y += self.dy
+        self.life -= 12
+
+    def draw(self, surf):
+        if self.life > 0:
+            p_surf = pygame.Surface((4, 4))
+            p_surf.set_alpha(self.life)
+            p_surf.fill(self.color)
+            surf.blit(p_surf, (self.x, self.y))
+
+
+particles = []
+
+# =========================
+# МУЗЫКАЛЬНАЯ СИСТЕМА
+# =========================
+SONGS = [
+    "Atlxs & Mxzi & Itamar Mc - Montagem Ladrao (Slowed).mp3",
+    "naomi-space-super-slowed.mp3",
+    "C418 - Aria Math (Minecraft Volume Beta).mp3"
+]
+current_song_idx = 0
+
+
+def prepare_music():
+    global current_song_idx
+    pygame.mixer.music.stop()
+    path = os.path.join(SND, SONGS[current_song_idx])
+    if os.path.exists(path):
+        try:
+            pygame.mixer.music.load(path)
+            pygame.mixer.music.set_volume(0.5)
+        except:
+            pass
+
+
+def start_music():
+    if not pygame.mixer.music.get_busy():
+        pygame.mixer.music.play(-1)
+
+
+prepare_music()
+
+
+# =========================
+# КЛАССЫ
 # =========================
 class Snake:
     def __init__(self):
-        self.head = load_img("removebg-preview__1_-removebg-preview.png")
-        self.head = pygame.transform.scale(self.head, (BLOCK, BLOCK))
+        self.head = pygame.transform.scale(load_img("removebg-preview (1).png"), (BLOCK, BLOCK))
+        self.reset()
 
-        self.body = [(100, 100)]
-        self.dx = 0
-        self.dy = 0
-
-        self.last_dx = 0
-        self.last_dy = 0
+    def reset(self):
+        self.body = [(WIDTH // 2 // BLOCK * BLOCK, HEIGHT // 2 // BLOCK * BLOCK)]
+        self.dx, self.dy = 0, 0
+        self.last_dx, self.last_dy = 0, 0
 
     def move(self):
-        self.last_dx = self.dx
-        self.last_dy = self.dy
-
-        x = self.body[0][0] + self.dx
-        y = self.body[0][1] + self.dy
-        self.body.insert(0, (x, y))
+        self.last_dx, self.last_dy = self.dx, self.dy
+        self.body.insert(0, (self.body[0][0] + self.dx, self.body[0][1] + self.dy))
 
     def trim(self):
-        self.body.pop()
+        if len(self.body) > 1: self.body.pop()
 
     def draw(self):
         screen.blit(self.head, self.body[0])
-
         for part in self.body[1:]:
-            pygame.draw.rect(
-                screen,
-                (0, 200, 0),
-                (part[0], part[1], BLOCK, BLOCK),
-                border_radius=8
-            )
+            pygame.draw.rect(screen, (0, 200, 0), (part[0], part[1], BLOCK, BLOCK), border_radius=8)
 
-    def dead(self):
+    def dead(self, is_secret):
         x, y = self.body[0]
-        return x < 0 or x >= WIDTH or y < 0 or y >= HEIGHT
+        if is_secret:
+            if x < 0:
+                self.body[0] = (WIDTH - BLOCK, y)
+            elif x >= WIDTH:
+                self.body[0] = (0, y)
+            elif y < 0:
+                self.body[0] = (x, HEIGHT - BLOCK)
+            elif y >= HEIGHT:
+                self.body[0] = (x, 0)
+            return self.body[0] in self.body[1:]
+        return x < 0 or x >= WIDTH or y < 0 or y >= HEIGHT or self.body[0] in self.body[1:]
 
-    def hit_self(self):
-        return self.body[0] in self.body[1:]
 
-
-# =========================
-# ЯБЛОКО
-# =========================
 class Apple:
     def __init__(self):
-        self.image = load_img("image-removebg-preview (10).png")
-        self.image = pygame.transform.scale(self.image, (BLOCK, BLOCK))
-        self.spawn()
+        self.img_reg = pygame.transform.scale(load_img("image-removebg-preview.png"), (BLOCK, BLOCK))
+        self.img_gold = pygame.transform.scale(load_img("image-removebg-preview (1).png"), (BLOCK, BLOCK))
+        self.spawn(10000)
 
-    def spawn(self):
+    def spawn(self, time_limit):
         self.x = random.randrange(0, WIDTH - BLOCK, BLOCK)
         self.y = random.randrange(0, HEIGHT - BLOCK, BLOCK)
+        self.is_gold = random.random() < 0.3
+        self.timer = time_limit
+        self.spawn_time = pygame.time.get_ticks()
+
+    def update(self):
+        if self.is_gold:
+            passed = pygame.time.get_ticks() - self.spawn_time
+            if passed > self.timer:
+                self.is_gold = False
 
     def draw(self):
-        screen.blit(self.image, (self.x, self.y))
+        img = self.img_gold if self.is_gold else self.img_reg
+        screen.blit(img, (self.x, self.y))
+        if self.is_gold:
+            passed = pygame.time.get_ticks() - self.spawn_time
+            width = BLOCK * (1 - passed / self.timer)
+            pygame.draw.rect(screen, (255, 215, 0), (self.x, self.y - 8, width, 4))
 
 
-snake = Snake()
-apple = Apple()
-
-running = True
+# =========================
+# ПЕРЕМЕННЫЕ
+# =========================
+snake, apple = Snake(), Apple()
+MODE = None
+score, best_record = 0, 0
 game_over = False
+secret_unlocked, show_secret_menu = False, False
+last_move, MOVE_DELAY = pygame.time.get_ticks(), 120
+GOLD_TIME = 10000
+font_b = pygame.font.SysFont("Arial", 60, bold=True)
+font_s = pygame.font.SysFont("Arial", 30, bold=True)
 
-score = 0
-best_score = 0
-
-last_move = pygame.time.get_ticks()
-
-font_big = pygame.font.SysFont("Arial", 60)
-font_small = pygame.font.SysFont("Arial", 30)
+music_buttons = [pygame.Rect(WIDTH - 160, HEIGHT - 150, 140, 40),
+                 pygame.Rect(WIDTH - 160, HEIGHT - 100, 140, 40),
+                 pygame.Rect(WIDTH - 160, HEIGHT - 50, 140, 40)]
 
 # =========================
-# ИГРА
+# ЦИКЛ
 # =========================
-while running:
-
+while True:
     clock.tick(FPS)
+    mouse_pos = pygame.mouse.get_pos()
+    events = pygame.event.get()
 
-    # =========================
-    # МЕНЮ ВЫБОРА РЕЖИМА
-    # =========================
+    for event in events:
+        if event.type == pygame.QUIT: pygame.quit(); sys.exit()
+
     if MODE is None:
         screen.blit(background, (0, 0))
+        screen.blit(font_b.render("SNAKE GAME", True, (255, 255, 255)), (WIDTH // 2 - 180, 100))
 
-        title = font_big.render("SNAKE GAME", True, (255, 255, 255))
-        screen.blit(title, (WIDTH//2 - 200, 100))
+        screen.blit(font_s.render("1 - NORMAL (10s Gold)", True, (0, 255, 0)), (WIDTH // 2 - 130, 230))
+        screen.blit(font_s.render("2 - MEDIUM (7s Gold)", True, (255, 255, 0)), (WIDTH // 2 - 130, 280))
+        screen.blit(font_s.render("3 - HARD (4s Gold)", True, (255, 50, 50)), (WIDTH // 2 - 130, 330))
 
-        text1 = font_small.render("1 - NORMAL", True, (0, 255, 0))
-        text2 = font_small.render("2 - MEDIUM", True, (255, 255, 0))
-        text3 = font_small.render("3 - HARD (x3 speed)", True, (255, 0, 0))
-
-        screen.blit(text1, (WIDTH//2 - 120, 250))
-        screen.blit(text2, (WIDTH//2 - 120, 300))
-        screen.blit(text3, (WIDTH//2 - 160, 350))
+        for i, btn in enumerate(music_buttons):
+            color = (50, 120, 255) if current_song_idx == i else (80, 80, 80)
+            pygame.draw.rect(screen, color, btn, border_radius=8)
+            screen.blit(font_s.render(f"Song {i + 1}", True, (255, 255, 255)), (btn.x + 25, btn.y + 5))
 
         pygame.display.update()
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-
+        for event in events:
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                for i, btn in enumerate(music_buttons):
+                    if btn.collidepoint(event.pos): current_song_idx = i; prepare_music()
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_1:
-                    set_mode("normal")
-                if event.key == pygame.K_2:
-                    set_mode("medium")
-                if event.key == pygame.K_3:
-                    set_mode("hard")
-
+                snake.reset();
+                score = 0
+                if event.key == pygame.K_1: MODE = "normal"; MOVE_DELAY = 130; GOLD_TIME = 10000; start_music()
+                if event.key == pygame.K_2: MODE = "medium"; MOVE_DELAY = 90; GOLD_TIME = 7000; start_music()
+                if event.key == pygame.K_3: MODE = "hard"; MOVE_DELAY = 60; GOLD_TIME = 4000; start_music()
+                apple.spawn(GOLD_TIME)
         continue
 
-    # =========================
-    # GAME OVER
-    # =========================
-    if game_over:
+    if show_secret_menu:
         screen.blit(background, (0, 0))
-        screen.blit(snake.head, snake.body[0])
-
-        text = font_big.render("GAME OVER", True, (255, 0, 0))
-        screen.blit(text, (WIDTH//2 - 180, HEIGHT//2 - 120))
-
-        score_text = font_small.render(f"Score: {score}", True, (255, 255, 0))
-        screen.blit(score_text, (WIDTH//2 - 80, HEIGHT//2 - 60))
-
-        best_text = font_small.render(f"Best: {best_score}", True, (0, 255, 255))
-        screen.blit(best_text, (WIDTH//2 - 80, HEIGHT//2 - 20))
-
-        restart_text = font_small.render("R - Restart | G - Menu", True, (255, 255, 255))
-        screen.blit(restart_text, (WIDTH//2 - 160, HEIGHT//2 + 40))
-
+        screen.blit(font_b.render("SECRET UNLOCKED!", True, (255, 0, 255)), (140, 180))
+        screen.blit(font_s.render("4 - Secret Mode | C - Continue", True, (255, 255, 255)), (140, 300))
         pygame.display.update()
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-
+        for event in events:
             if event.type == pygame.KEYDOWN:
-
-                # 🔁 restart
-                if event.key == pygame.K_r:
-                    snake = Snake()
-                    apple.spawn()
-                    score = 0
-                    game_over = False
-
-                # 🔄 back to menu
-                if event.key == pygame.K_g:
-                    snake = Snake()
-                    apple.spawn()
-                    score = 0
-                    game_over = False
-                    MODE = None
-
+                if event.key == pygame.K_4: MODE = "secret"; show_secret_menu = False; pygame.mixer.music.unpause()
+                if event.key == pygame.K_c: show_secret_menu = False; pygame.mixer.music.unpause()
         continue
 
-    # =========================
-    # СОБЫТИЯ
-    # =========================
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
+    if game_over:
+        if score > best_record: best_record = score
+        screen.blit(background, (0, 0))
+        screen.blit(font_b.render("GAME OVER", True, (255, 0, 0)), (WIDTH // 2 - 170, 180))
+        screen.blit(font_s.render(f"Your Score: {score}", True, (255, 255, 255)), (WIDTH // 2 - 90, 260))
+        screen.blit(font_s.render("R - Restart | G - Menu", True, (255, 255, 255)), (WIDTH // 2 - 130, 330))
+        pygame.display.update()
+        for event in events:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r: snake.reset(); apple.spawn(
+                    GOLD_TIME); score = 0; game_over = False; start_music()
+                if event.key == pygame.K_g: MODE = None; game_over = False; secret_unlocked = False; score = 0; pygame.mixer.music.stop()
+        continue
 
-    # =========================
-    # УПРАВЛЕНИЕ
-    # =========================
+    # --- УПРАВЛЕНИЕ ---
     keys = pygame.key.get_pressed()
+    if (keys[pygame.K_a] or keys[pygame.K_LEFT]) and snake.last_dx != BLOCK:
+        snake.dx, snake.dy = -BLOCK, 0
+    elif (keys[pygame.K_d] or keys[pygame.K_RIGHT]) and snake.last_dx != -BLOCK:
+        snake.dx, snake.dy = BLOCK, 0
+    elif (keys[pygame.K_w] or keys[pygame.K_UP]) and snake.last_dy != BLOCK:
+        snake.dx, snake.dy = 0, -BLOCK
+    elif (keys[pygame.K_s] or keys[pygame.K_DOWN]) and snake.last_dy != -BLOCK:
+        snake.dx, snake.dy = 0, BLOCK
 
-    if keys[pygame.K_a] and snake.last_dx != BLOCK:
-        snake.dx = -BLOCK
-        snake.dy = 0
-
-    if keys[pygame.K_d] and snake.last_dx != -BLOCK:
-        snake.dx = BLOCK
-        snake.dy = 0
-
-    if keys[pygame.K_w] and snake.last_dy != BLOCK:
-        snake.dx = 0
-        snake.dy = -BLOCK
-
-    if keys[pygame.K_s] and snake.last_dy != -BLOCK:
-        snake.dx = 0
-        snake.dy = BLOCK
-
-    # =========================
-    # ДВИЖЕНИЕ
-    # =========================
+    # --- ЛОГИКА ---
+    apple.update()
     now = pygame.time.get_ticks()
-
     if now - last_move > MOVE_DELAY:
         last_move = now
+        if snake.dx != 0 or snake.dy != 0:
+            snake.move()
+            if abs(snake.body[0][0] - apple.x) < BLOCK and abs(snake.body[0][1] - apple.y) < BLOCK:
+                p_color = (255, 215, 0) if apple.is_gold else (255, 0, 0)
+                for _ in range(15): particles.append(Particle(apple.x + 16, apple.y + 16, p_color))
 
-        snake.move()
+                score += 3 if apple.is_gold else 1
+                apple.spawn(GOLD_TIME)
+                if score >= 50 and not secret_unlocked:
+                    secret_unlocked = True;
+                    show_secret_menu = True;
+                    pygame.mixer.music.pause()
+            else:
+                snake.trim()
+            if snake.dead(MODE == "secret"): game_over = True; pygame.mixer.music.stop()
 
-        # 🍎 еда
-        if abs(snake.body[0][0] - apple.x) < BLOCK and abs(snake.body[0][1] - apple.y) < BLOCK:
-            apple.spawn()
-            score += 1
-            update_speed(score)
-        else:
-            snake.trim()
+    for p in particles[:]:
+        p.update()
+        if p.life <= 0: particles.remove(p)
 
-        # 💀 смерть
-        if snake.dead() or snake.hit_self():
-            game_over = True
-            if score > best_score:
-                best_score = score
-
-    # =========================
-    # ОТРИСОВКА
-    # =========================
+    # --- ОТРИСОВКА ---
     screen.blit(background, (0, 0))
-
+    for p in particles: p.draw(screen)
     apple.draw()
     snake.draw()
-
-    score_text = font_small.render(f"Score: {score}", True, (255, 255, 0))
-    screen.blit(score_text, (10, 10))
-
+    screen.blit(font_s.render(f"Score: {score}", True, (255, 255, 0)), (10, 10))
+    # СИНИЙ РЕКОРД
+    screen.blit(font_s.render(f"Best: {best_record}", True, (0, 100, 255)), (10, 45))
     pygame.display.update()
-
-pygame.quit()
